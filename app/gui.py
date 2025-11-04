@@ -5,7 +5,7 @@ from tkinter import font as tkfont
 
 from link.tcp_peer import TcpPeer
 from link.frame import build_frame_from_input, parse_frame
-from crc.crc_core import explain_crc_steps
+from crc.crc_core import explain_crc_long_division
 
 def load_env(path=".env"):
     env = {}
@@ -46,15 +46,15 @@ class App:
         tk.Label(right, text="apartado para recibir", bg="#e67e22").pack(fill=tk.X)
 
         tk.Label(right, text="mensaje de texto recibido es:", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
-        self.txt_msg = scrolledtext.ScrolledText(right, height=8, bg="#66bb6a")
+        self.txt_msg = scrolledtext.ScrolledText(right, height=7, bg="#66bb6a")
         self.txt_msg.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
         tk.Label(right, text="mensaje de crc recibido es:", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
-        self.txt_crc = scrolledtext.ScrolledText(right, height=8, bg="#66bb6a")
+        self.txt_crc = scrolledtext.ScrolledText(right, height=7, bg="#66bb6a")
         self.txt_crc.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
-        tk.Label(right, text="proceso CRC (paso a paso):", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
-        self.txt_proc = scrolledtext.ScrolledText(right, height=14, bg="#66bb6a")
+        tk.Label(right, text="operación CRC (división binaria):", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
+        self.txt_proc = scrolledtext.ScrolledText(right, height=16, bg="#66bb6a")
         try:
             self.txt_proc.configure(font=tkfont.Font(family="Consolas", size=10))
         except Exception:
@@ -106,8 +106,10 @@ class App:
             )
             self._append(self.txt_crc, detalles)
 
-            steps = explain_crc_steps(payload, self.poly_bits)
+            # División binaria visual
+            steps = explain_crc_long_division(payload, self.poly_bits)
             self._append(self.txt_proc, steps + "\n")
+
         except Exception as e:
             self._append(self.txt_msg, f"error al procesar: {e}\n")
 
