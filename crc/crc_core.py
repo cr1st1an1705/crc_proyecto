@@ -67,3 +67,42 @@ def unpack_and_verify(frame: bytes, poly_bits: str):
         "crc_recv_bits": format(crc_recv, f"0{n}b"),
         "crc_calc_bits": format(calc, f"0{n}b"),
     }
+
+def explain_crc_steps(data: bytes, poly_bits: str) -> str:
+    """Retorna un texto con el proceso LFSR paso a paso, consistente con crc_calc()."""
+    n = len(poly_bits)
+    if n < 1 or n > 8:
+        raise ValueError("POLY_BITS debe tener entre 1 y 8 bits")
+    mask = (1 << n) - 1
+    poly = int(poly_bits, 2) & mask
+    reg = 0
+
+    def _bits(d: bytes):
+        for b in d:
+            for i in range(7, -1, -1):
+                yield (b >> i) & 1
+
+    bits_in = "".join(str(b) for b in _bits(data))
+    lines = []
+    lines.append(f"polinomio: {poly_bits}  (n={n})")
+    lines.append(f"bits de entrada: {bits_in}")
+    lines.append(f"reg inicial: {format(reg, f'0{n}b')}\n")
+
+    step = 0
+    for bit in _bits(data):
+        msb = (reg >> (n - 1)) & 1
+        shifted = ((reg << 1) & mask) | (bit & 1)
+        if msb:
+            reg = shifted ^ poly
+            action = f"XOR poly ({poly_bits})"
+        else:
+            reg = shifted
+            action = "sin XOR"
+        step += 1
+        lines.append(
+            f"paso {step:02d}: in={bit} msb={msb}  shift={format(shifted, f'0{n}b')}  -> {action}  reg={format(reg, f'0{n}b')}"
+        )
+
+    lines.append(f"\nresto final (CRC): {format(reg, f'0{n}b')}")
+    return "\n".join(lines)
+

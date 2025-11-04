@@ -1,9 +1,11 @@
-﻿import os
+import os
 import tkinter as tk
 from tkinter import scrolledtext
+from tkinter import font as tkfont
 
 from link.tcp_peer import TcpPeer
 from link.frame import build_frame_from_input, parse_frame
+from crc.crc_core import explain_crc_steps
 
 def load_env(path=".env"):
     env = {}
@@ -21,14 +23,15 @@ class App:
     def __init__(self, master):
         self.env = load_env()
         self.role = self.env.get("ROLE", "servidor")
-               self.host = self.env.get("HOST", "0.0.0.0")
+        self.host = self.env.get("HOST", "0.0.0.0")
         self.port = int(self.env.get("PORT", "5000"))
         self.peer_host = self.env.get("PEER_HOST", "127.0.0.1")
         self.peer_port = int(self.env.get("PEER_PORT", "5000"))
-        self.poly_bits = self.env.get("POLY_BITS", "0011")
+        self.poly_bits = self.env.get("POLY_BITS", "11011")
 
         master.title("crc wifi gui")
 
+        # izquierda: entrada
         left = tk.Frame(master, bg="#2b579a", width=420)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
         tk.Label(left, text="mensajes para enviar", bg="#e67e22").pack(fill=tk.X)
@@ -37,17 +40,26 @@ class App:
         self.entry.pack(fill=tk.X, padx=6, pady=4)
         tk.Button(left, text="enviar", command=self.on_send).pack(padx=6, pady=6, anchor="w")
 
+        # derecha: salida
         right = tk.Frame(master, bg="#2b579a")
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         tk.Label(right, text="apartado para recibir", bg="#e67e22").pack(fill=tk.X)
 
         tk.Label(right, text="mensaje de texto recibido es:", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
-        self.txt_msg = scrolledtext.ScrolledText(right, height=10, bg="#66bb6a")
+        self.txt_msg = scrolledtext.ScrolledText(right, height=8, bg="#66bb6a")
         self.txt_msg.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
         tk.Label(right, text="mensaje de crc recibido es:", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
-        self.txt_crc = scrolledtext.ScrolledText(right, height=10, bg="#66bb6a")
+        self.txt_crc = scrolledtext.ScrolledText(right, height=8, bg="#66bb6a")
         self.txt_crc.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+
+        tk.Label(right, text="proceso CRC (paso a paso):", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
+        self.txt_proc = scrolledtext.ScrolledText(right, height=14, bg="#66bb6a")
+        try:
+            self.txt_proc.configure(font=tkfont.Font(family="Consolas", size=10))
+        except Exception:
+            pass
+        self.txt_proc.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
         self.peer = TcpPeer(host=self.host, port=self.port, on_data=self.on_rx)
         self.peer.start()
@@ -93,6 +105,9 @@ class App:
                 f"polinomio generador: {res['poly_bits']}\n"
             )
             self._append(self.txt_crc, detalles)
+
+            steps = explain_crc_steps(payload, self.poly_bits)
+            self._append(self.txt_proc, steps + "\n")
         except Exception as e:
             self._append(self.txt_msg, f"error al procesar: {e}\n")
 
