@@ -1,4 +1,4 @@
-﻿import socket
+import socket
 import threading
 
 class TcpPeer:
@@ -41,10 +41,8 @@ class TcpPeer:
                 except Exception:
                     pass
 
-    def send(self, host, port, data: bytes):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        with s:
-            s.connect((host, int(port)))
+    def send(self, host, port, data: bytes, timeout=2.0):
+        with socket.create_connection((host, int(port)), timeout=timeout) as s:
             s.sendall(data)
 
     def stop(self):
