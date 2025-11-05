@@ -1,4 +1,4 @@
-﻿from typing import List, Tuple
+from typing import List, Tuple
 
 def bits_from_bytes(data: bytes) -> List[int]:
     bits: List[int] = []
@@ -67,3 +67,89 @@ def unpack_and_verify(frame: bytes, poly_bits: str):
         "crc_recv_bits": format(crc_recv, f"0{n}b"),
         "crc_calc_bits": format(calc, f"0{n}b"),
     }
+
+def explain_crc_steps(data: bytes, poly_bits: str) -> str:
+    """Retorna un texto con el proceso LFSR paso a paso, consistente con crc_calc()."""
+    n = len(poly_bits)
+    if n < 1 or n > 8:
+        raise ValueError("POLY_BITS debe tener entre 1 y 8 bits")
+    mask = (1 << n) - 1
+    poly = int(poly_bits, 2) & mask
+    reg = 0
+
+    def _bits(d: bytes):
+        for b in d:
+            for i in range(7, -1, -1):
+                yield (b >> i) & 1
+
+    bits_in = "".join(str(b) for b in _bits(data))
+    lines = []
+    lines.append(f"polinomio: {poly_bits}  (n={n})")
+    lines.append(f"bits de entrada: {bits_in}")
+    lines.append(f"reg inicial: {format(reg, f'0{n}b')}\n")
+
+    step = 0
+    for bit in _bits(data):
+        msb = (reg >> (n - 1)) & 1
+        shifted = ((reg << 1) & mask) | (bit & 1)
+        if msb:
+            reg = shifted ^ poly
+            action = f"XOR poly ({poly_bits})"
+        else:
+            reg = shifted
+            action = "sin XOR"
+        step += 1
+        lines.append(
+            f"paso {step:02d}: in={bit} msb={msb}  shift={format(shifted, f'0{n}b')}  -> {action}  reg={format(reg, f'0{n}b')}"
+        )
+
+    lines.append(f"\nresto final (CRC): {format(reg, f'0{n}b')}")
+    return "\n".join(lines)
+
+
+def explain_crc_long_division(data: bytes, poly_bits: str) -> str:
+    """
+    División binaria en GF(2) con presentación de resta apilada.
+    Muestra el generador, la trama (datos + n ceros) y las restas alineadas.
+    """
+    n = len(poly_bits)
+    if n < 1 or n > 8:
+        raise ValueError("POLY_BITS debe tener entre 1 y 8 bits")
+    divisor_bits = poly_bits
+    divisor = int(divisor_bits, 2)
+
+    # bits de la trama con n ceros añadidos
+    def _bits(d: bytes):
+        for b in d:
+            for i in range(7, -1, -1):
+                yield (b >> i) & 1
+    dividend_bits = "".join(str(b) for b in _bits(data)) + "0"*n
+
+    # trabajo como lista de '0'/'1'
+    work = list(dividend_bits)
+    L = len(work)
+
+    lines = []
+    lines.append(f"generador: {divisor_bits}")
+    lines.append(f"trama:     {dividend_bits}\n")
+
+    i = 0
+    while i <= L - n:
+        if work[i] == "1":
+            # segmento actual y "resta" (XOR) del generador alineado
+            segment = "".join(work[i:i+n])
+            # resultado de la resta bit a bit
+            res_bits = "".join("0" if segment[j] == divisor_bits[j] else "1" for j in range(n))
+            # aplicar la resta al trabajo
+            for j in range(n):
+                work[i+j] = "0" if work[i+j] == divisor_bits[j] else "1"
+            indent = " " * i
+            lines.append(f"{indent}{segment}")
+            lines.append(f"{indent}{divisor_bits}")
+            lines.append(f"{indent}{'-'*n}")
+            lines.append(f"{indent}{res_bits}\n")
+        i += 1
+
+    resto = "".join(work[-n:])
+    lines.append(f"residuo:   {resto}")
+    return "\n".join(lines)
