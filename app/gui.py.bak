@@ -6,31 +6,23 @@ from tkinter import scrolledtext
 from tkinter import font as tkfont
 
 from link.tcp_peer import TcpPeer
-from crc.crc_core import explain_crc_verify_lfsr
+from crc.crc_core import explain_crc_long_division_verify
 from link.proto import (
     build_data_frame_from_input,
+    build_data_frame,
     build_ack_frame,
     parse_frame,
     TYPE_DATA, TYPE_ACK, TYPE_NACK
 )
 
-# Solo verificacion (header+payload+CRC)
+# explicaciÃ³n matemÃ¡tica si estÃ¡ disponible
 try:
-    from crc.crc_core import explain_crc_long_division_verify as explain_crc_verify
+    from crc.crc_core import explain_crc_long_division as explain_crc
 except Exception:
-    def explain_crc_verify(_frame: bytes, _poly: str) -> str:
-        return ""
-
-# bits bonitos
-try:
-    from crc.crc_core import bits_from_bytes
-except Exception:
-    def bits_from_bytes(data: bytes):
-        out = []
-        for b in data:
-            for i in range(7, -1, -1):
-                out.append((b >> i) & 1)
-        return out
+    try:
+        from crc.crc_core import explain_crc_math as explain_crc
+    except Exception:
+        def explain_crc(data, poly_bits): return ""
 
 def load_env(path=".env"):
     env = {}
@@ -44,10 +36,6 @@ def load_env(path=".env"):
                 env[k.strip()] = v.strip()
     return env
 
-def _group_bits(bit_iterable, size=4) -> str:
-    s = "".join(str(b) for b in bit_iterable)
-    return " ".join(s[i:i+size] for i in range(0, len(s), size))
-
 class App:
     def __init__(self, master):
         self.env = load_env()
@@ -58,42 +46,57 @@ class App:
         self.peer_port = int(self.env.get("PEER_PORT", "5000"))
         self.poly_bits = self.env.get("POLY_BITS", "11011")
 
+        # Estado de protocolo
         self.next_seq = 0
         self.timeout = 2.0
         self.max_retries = 3
         self.inject_fail = False
-        self.status = tk.StringVar(value="modo: NORMAL - listo")
-        self._ack_wait = {}
+        self.status = tk.StringVar(value="modo: NORMAL â€¢ listo")
+        self._ack_wait = {}   # seq -> {"event": Event, "result": True/False/None}
         self._ack_lock = threading.Lock()
-        self._delivered = set()
+        self._delivered = set()  # SEQs ya entregados
 
         master.title("crc wifi gui")
 
-        # izquierda
+        # izquierda: entrada + controles
         left = tk.Frame(master, bg="#2b579a", width=420)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
         tk.Label(left, text="mensajes para enviar", bg="#e67e22").pack(fill=tk.X)
         tk.Label(left, text="mensaje o crc:", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
-        self.entry = tk.Entry(left, bg="#66bb6a"); self.entry.pack(fill=tk.X, padx=6, pady=4)
-        bar = tk.Frame(left, bg="#2b579a"); bar.pack(anchor="w", padx=6, pady=2)
+        self.entry = tk.Entry(left, bg="#66bb6a")
+        self.entry.pack(fill=tk.X, padx=6, pady=4)
+
+        bar = tk.Frame(left, bg="#2b579a")
+        bar.pack(anchor="w", padx=6, pady=2)
         tk.Button(bar, text="enviar", command=self.on_send, width=10).pack(side=tk.LEFT)
         tk.Button(bar, text="fallar", command=self.set_fail, width=8).pack(side=tk.LEFT, padx=6)
         tk.Button(bar, text="arreglar", command=self.set_ok, width=8).pack(side=tk.LEFT)
+
         tk.Label(left, text="palabras enviadas:", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(8,0))
-        sent_wrap = tk.Frame(left, bg="#2b579a"); sent_wrap.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
-        self.sent_list = tk.Listbox(sent_wrap, height=10); self.sent_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = tk.Scrollbar(sent_wrap, command=self.sent_list.yview); sb.pack(side=tk.RIGHT, fill=tk.Y)
+        sent_wrap = tk.Frame(left, bg="#2b579a")
+        sent_wrap.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        self.sent_list = tk.Listbox(sent_wrap, height=10)
+        self.sent_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = tk.Scrollbar(sent_wrap, command=self.sent_list.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.sent_list.configure(yscrollcommand=sb.set)
+
         tk.Label(left, textvariable=self.status, bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,8))
 
-        # derecha
-        right = tk.Frame(master, bg="#2b579a"); right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        # derecha: salida
+        right = tk.Frame(master, bg="#2b579a")
+        right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         tk.Label(right, text="apartado para recibir", bg="#e67e22").pack(fill=tk.X)
+
         tk.Label(right, text="mensaje de texto recibido es:", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
-        self.txt_msg = scrolledtext.ScrolledText(right, height=7, bg="#66bb6a"); self.txt_msg.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        self.txt_msg = scrolledtext.ScrolledText(right, height=7, bg="#66bb6a")
+        self.txt_msg.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+
         tk.Label(right, text="mensaje de crc recibido es:", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
-        self.txt_crc = scrolledtext.ScrolledText(right, height=7, bg="#66bb6a"); self.txt_crc.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
-        tk.Label(right, text="operacion CRC (division):", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
+        self.txt_crc = scrolledtext.ScrolledText(right, height=7, bg="#66bb6a")
+        self.txt_crc.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+
+        tk.Label(right, text="operaciÃ³n CRC (divisiÃ³n binaria):", bg="#2b579a", fg="white").pack(anchor="w", padx=6, pady=(6,0))
         self.txt_proc = scrolledtext.ScrolledText(right, height=16, bg="#66bb6a")
         try:
             self.txt_proc.configure(font=tkfont.Font(family="Consolas", size=10))
@@ -106,23 +109,27 @@ class App:
 
     def set_fail(self):
         self.inject_fail = True
-        self.status.set("modo: FALLAR - listo")
+        self.status.set("modo: FALLAR â€¢ listo")
 
     def set_ok(self):
         self.inject_fail = False
-        self.status.set("modo: NORMAL - listo")
+        self.status.set("modo: NORMAL â€¢ listo")
 
+    # --- envÃ­o con retry/ACK ---
     def on_send(self):
         text = self.entry.get().strip()
         if not text:
             return
+
         seq = self.next_seq
         self.next_seq = (self.next_seq + 1) & 0xFF
+
         frame, payload = build_data_frame_from_input(text, self.poly_bits, seq)
 
         note = ""
         if self.inject_fail and len(payload) > 0:
             arr = bytearray(frame)
+            # flip 1 bit del primer byte de payload (despuÃ©s de cabecera de 5 bytes)
             arr[5] ^= 0x01
             frame = bytes(arr)
             note = "  (simulado FALLO: flip 1 bit)"
@@ -137,7 +144,7 @@ class App:
                 self.status.set(f"enviando seq={seq} intento {i+1}/{self.max_retries}{note}")
                 self.peer.send(self.peer_host, self.peer_port, frame, timeout=2.0)
             except Exception as e:
-                self.status.set(f"error de envio: {e}")
+                self.status.set(f"error de envÃ­o: {e}")
                 break
 
             if evt.wait(self.timeout):
@@ -148,29 +155,30 @@ class App:
                     ok = True
                     break
                 else:
-                    self.status.set(f"NACK seq={seq} -> reintento")
+                    self.status.set(f"NACK seq={seq} â†’ reintento")
                     evt.clear()
                     time.sleep(0.2)
             else:
-                self.status.set(f"timeout seq={seq} -> reintento")
+                self.status.set(f"timeout seq={seq} â†’ reintento")
                 time.sleep(0.2)
 
         with self._ack_lock:
             self._ack_wait.pop(seq, None)
 
         if not ok:
-            self.status.set(f"fallo despues de {self.max_retries} intentos{note}")
+            self.status.set(f"fallÃ³ despuÃ©s de {self.max_retries} intentos{note}")
 
         self.sent_list.insert(tk.END, text + note)
         self.entry.delete(0, tk.END)
 
+    # --- util GUI ---
     def _append(self, widget, s):
         widget.configure(state="normal")
         widget.insert(tk.END, s)
         widget.see(tk.END)
         widget.configure(state="disabled")
 
-    # --- recepcion ---
+    # --- recepciÃ³n ---
     def on_rx(self, data: bytes, addr):
         try:
             res = parse_frame(data, self.poly_bits)
@@ -178,6 +186,7 @@ class App:
             seq = res["seq"]
 
             if t == TYPE_DATA:
+                # verificar CRC y responder ACK/NACK
                 ok_crc = res["crc_ok"]
                 try:
                     decoded = res["payload"].decode("utf-8")
@@ -185,12 +194,14 @@ class App:
                     decoded = None
 
                 if ok_crc:
+                    # duplicado?
                     if seq not in self._delivered:
                         if decoded is not None:
                             self._append(self.txt_msg, f"MENSAJE DESCIFRADO: {decoded}\n")
                         else:
                             self._append(self.txt_msg, f"MENSAJE DESCIFRADO: <bytes no-texto> {res['payload']!r}\n")
                         self._delivered.add(seq)
+                    # responder ACK siempre
                     ack = build_ack_frame(seq, True, self.poly_bits)
                     try:
                         self.peer.send(self.peer_host, self.peer_port, ack, timeout=2.0)
@@ -204,21 +215,17 @@ class App:
                         pass
                     self._append(self.txt_msg, "CRC FALLO. mensaje descartado\n")
 
-                bits_palabra = _group_bits(bits_from_bytes(res["payload"]), 4)
-                bits_enviados = _group_bits(bits_from_bytes(data), 4)
+                # Detalles y operaciÃ³n matemÃ¡tica usando cabecera+payload
                 detalles = (
                     f"crc recibido: {res['crc_recv_bits']}\n"
                     f"crc calculado: {res['crc_calc_bits']}\n"
                     f"bits header: {res['header_bits']}\n"
                     f"bits payload: {res['payload_bits']}\n"
-                    f"bits de la palabra: {bits_palabra}\n"
-                    f"bits enviados: {bits_enviados}\n"
                     f"polinomio generador: {res['poly_bits']}\n"
                 )
                 self._append(self.txt_crc, detalles)
-
-                # verificacion: dividir (header+payload+CRC) => residuo 0..0 si esta bien
-                steps = explain_crc_verify_lfsr(res["hp_bytes"], res["crc_recv"], self.poly_bits)
+data_plus_crc = res["hp_bytes"] + bytes([res["crc_recv"]])
+steps = explain_crc_long_division_verify(data_plus_crc, self.poly_bits)
                 if steps:
                     self._append(self.txt_proc, steps + "\n")
 

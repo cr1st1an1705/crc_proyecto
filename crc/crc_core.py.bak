@@ -1,4 +1,4 @@
-﻿from typing import List, Tuple
+from typing import List, Tuple
 
 def bits_from_bytes(data: bytes) -> List[int]:
     bits: List[int] = []
@@ -35,21 +35,11 @@ def crc_calc(data: bytes, poly_bits: str, init: int = 0) -> int:
     mask = (1 << n) - 1
     poly = int(poly_bits, 2) & mask
     reg = init & mask
-
-    # procesa datos
     for bit in bits_from_bytes(data):
         msb = (reg >> (n - 1)) & 1
         reg = ((reg << 1) & mask) | (bit & 1)
         if msb:
             reg ^= poly
-
-    # vaciado: clockea n ceros (equivale a dividir por x^n)
-    for _ in range(n):
-        msb = (reg >> (n - 1)) & 1
-        reg = ((reg << 1) & mask)
-        if msb:
-            reg ^= poly
-
     return reg & mask
 
 def pack_lowbits(msg: bytes, poly_bits: str) -> Tuple[bytes, int]:
@@ -61,7 +51,7 @@ def pack_lowbits(msg: bytes, poly_bits: str) -> Tuple[bytes, int]:
 def unpack_and_verify(frame: bytes, poly_bits: str):
     n = len(poly_bits)
     if not frame:
-        raise ValueError("frame vacÃ­o")
+        raise ValueError("frame vacío")
     crc_recv = frame[-1] & ((1 << n) - 1)
     payload = frame[:-1]
     calc = crc_calc(payload, poly_bits)
@@ -119,7 +109,7 @@ def explain_crc_steps(data: bytes, poly_bits: str) -> str:
 
 def explain_crc_long_division(data: bytes, poly_bits: str) -> str:
     """
-    DivisiÃ³n binaria en GF(2) con presentaciÃ³n de resta apilada.
+    División binaria en GF(2) con presentación de resta apilada.
     Muestra el generador, la trama (datos + n ceros) y las restas alineadas.
     """
     n = len(poly_bits)
@@ -128,7 +118,7 @@ def explain_crc_long_division(data: bytes, poly_bits: str) -> str:
     divisor_bits = poly_bits
     divisor = int(divisor_bits, 2)
 
-    # bits de la trama con n ceros aÃ±adidos
+    # bits de la trama con n ceros añadidos
     def _bits(d: bytes):
         for b in d:
             for i in range(7, -1, -1):
@@ -204,44 +194,6 @@ def explain_crc_long_division_verify(frame: bytes, poly_bits: str) -> str:
         i += 1
 
     resto = "".join(work[-n:])
-    ok_mark = "âœ…" if resto == "0"*n else "âŒ"
+    ok_mark = "✅" if resto == "0"*n else "❌"
     lines.append(f"Residuo final = {resto} {ok_mark}")
     return "\n".join(lines)
-
-
-
-def explain_crc_verify_lfsr(hp_bytes: bytes, crc_recv: int, poly_bits: str) -> str:
-    """
-    Verifica corriendo el mismo LFSR sobre (header+payload) y luego los n bits del CRC.
-    Si coincide, el registro final es 0...0.
-    """
-    n = len(poly_bits)
-    if n < 1 or n > 8:
-        raise ValueError("POLY_BITS debe tener entre 1 y 8 bits")
-    mask = (1 << n) - 1
-    poly = int(poly_bits, 2) & mask
-    reg = 0
-
-    def _bits_of_bytes(d: bytes):
-        for b in d:
-            for i in range(7, -1, -1):
-                yield (b >> i) & 1
-
-    # 1) alimentar header+payload
-    for bit in _bits_of_bytes(hp_bytes):
-        msb = (reg >> (n - 1)) & 1
-        reg = ((reg << 1) & mask) | (bit & 1)
-        if msb:
-            reg ^= poly
-
-    # 2) alimentar los n bits del CRC recibido (MSB primero)
-    for i in range(n - 1, -1, -1):
-        bit = (crc_recv >> i) & 1
-        msb = (reg >> (n - 1)) & 1
-        reg = ((reg << 1) & mask) | bit
-        if msb:
-            reg ^= poly
-
-    resto = format(reg & mask, f"0{n}b")
-    ok = "OK" if reg == 0 else "MAL"
-    return f"Residuo final = {resto} {ok}"
